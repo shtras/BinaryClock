@@ -1,3 +1,6 @@
+#include <ArduinoSTL.h>
+#include <vector>
+
 using Pin = int;
 using Timestamp = decltype(millis());
 constexpr Timestamp millisInSecond = 1000;
@@ -5,30 +8,16 @@ constexpr Timestamp millisInMinute = millisInSecond * 60;
 constexpr Timestamp millisInHour = millisInMinute * 60;
 constexpr Timestamp fullDay = 24 * millisInHour;
 
-struct Mode
-{
-    enum Value {
-        Clock,
-        SetupHour1,
-        SetupHour2,
-        SetupMinute1,
-        SetupMinute2,
-        SetupSecond1,
-        SetupSecond2,
-        LastValue
-    };
-};
-
 namespace pins
 {
 Pin button1 = 2;
 Pin button2 = 3;
 } // namespace pins
 
-class Segment
+class ShiftRegister
 {
 public:
-    Segment(Pin data, Pin latch, Pin clock)
+    ShiftRegister(Pin data, Pin latch, Pin clock)
         : data_(data)
         , latch_(latch)
         , clock_(clock)
@@ -38,78 +27,105 @@ public:
         pinMode(clock_, OUTPUT);
     }
 
+    void setValue(int value, int mask)
+    {
+        value_ &= ~mask;
+        value_ |= (value & mask);
+    }
     void display()
     {
-        if (blinkpart_ != 0) {
-            int blinkTimeout = blinkCycle_ ? 100 : 1000;
-            Timestamp now = millis();
-            if (now < lastChange_ || now - lastChange_ > blinkTimeout) {
-                blinkCycle_ = !blinkCycle_;
-                lastChange_ = now;
-            }
-        }
-        int res{};
-        int tens = value_ / 10;
-        int digits = value_ % 10;
-        res = tens | (digits << 4);
-
-        if (blinkpart_ == 1) {
-            if (!valueSet_) {
-                res |= 0b00001111;
-            }
-            if (blinkCycle_) {
-                res &= 0b11110000;
-            }
-        } else if (blinkpart_ == 2) {
-            if (!valueSet_) {
-                res |= 0b11110000;
-            }
-            if (blinkCycle_) {
-                res &= 0b00001111;
-            }
-        }
         digitalWrite(latch_, LOW);
-        shiftOut(data_, clock_, MSBFIRST, res);
+        shiftOut(data_, clock_, MSBFIRST, value_);
         digitalWrite(latch_, HIGH);
+    }
+
+private:
+    int value_{};
+    Pin data_;
+    Pin latch_;
+    Pin clock_;
+};
+
+class Segment
+{
+public:
+    enum class Position { Left, Right };
+    enum class BlinkMode { None, Full, Value };
+    Segment(ShiftRegister& shiftRegister, Position position, int maxValue)
+        : shiftRegister_(shiftRegister)
+        , position_(position)
+        , maxValue_(maxValue)
+    {
     }
 
     void setValue(int value)
     {
         value_ = value;
-        valueSet_ = true;
     }
 
-    int value() const
+    void display()
     {
-        return value_;
-    }
-
-    void setBlink(int part)
-    {
-        if (blinkpart_ != part) {
-            valueSet_ = false;
-            lastChange_ = 0;
+        int value = 0;
+        if (blinkMode_ == BlinkMode::None || blinkMode_ == BlinkMode::Value) {
+            value = value_;
+        } else if (blinkMode_ == BlinkMode::Full) {
+            value = 0b11111111;
         }
-        blinkpart_ = part;
+        if (blinkMode_ != BlinkMode::None) {
+            Timestamp now = millis();
+            Timestamp blinkTimeout = blinkPhase_ ? 100 : 1000;
+            if (now < lastBlink_ || now - lastBlink_ > blinkTimeout) {
+                lastBlink_ = now;
+                value = 0;
+                blinkPhase_ = !blinkPhase_;
+            }
+        }
+        if (position_ == Position::Right) {
+            value <<= 4;
+        }
+        shiftRegister_.setValue(value, position_ == Position::Left ? leftMask_ : rightMask_);
+        shiftRegister_.display();
     }
+
+    void setBlinkMode(BlinkMode mode)
+    {
+        blinkMode_ = mode;
+    }
+
+    void increaseValue()
+    {
+        ++value_;
+        if (value_ > maxValue_) {
+            value_ = 0;
+        }
+    }
+
+    int value() {return value_;}
 
 private:
-    Pin data_;
-    Pin latch_;
-    Pin clock_;
-
-    int value_;
-    int blinkpart_{0};
-    Timestamp lastChange_{};
-    bool blinkCycle_ = true;
-    bool valueSet_ = false;
+    static constexpr int leftMask_ = 0b00001111;
+    static constexpr int rightMask_ = 0b11110000;
+    ShiftRegister& shiftRegister_;
+    Position position_;
+    int value_{};
+    int maxValue_;
+    BlinkMode blinkMode_{BlinkMode::None};
+    Timestamp lastBlink_{};
+    bool blinkPhase_{true};
 };
 
-Segment hours{11, 5, 8};
-Segment minutes{12, 6, 9};
-Segment seconds{13, 7, 10};
+ShiftRegister hoursRegister{11, 5, 8};
+ShiftRegister minutesRegister{12, 6, 9};
+ShiftRegister secondsResigter{13, 7, 10};
 
-Mode::Value mode = Mode::Clock;
+std::vector<Segment> segments = {
+    Segment(hoursRegister, Segment::Position::Left, 2),
+    Segment(hoursRegister, Segment::Position::Right, 9),
+    Segment(minutesRegister, Segment::Position::Left, 5),
+    Segment(minutesRegister, Segment::Position::Right, 9),
+    Segment(secondsResigter, Segment::Position::Left, 5),
+    Segment(secondsResigter, Segment::Position::Right, 9)
+};
 
 /*
 14:45:12
@@ -121,94 +137,38 @@ Timestamp setTime{0};
 Timestamp deltaTime{0};
 Timestamp lastPress{0};
 
-void cycleMode()
-{
-    mode = static_cast<Mode::Value>((mode + 1) % Mode::LastValue);
-}
+auto configuringSegmentIdx = segments.end();
+;
 
 void button1ISR()
 {
     noInterrupts();
-    if (millis() - lastPress < 150) {
-        interrupts();
-        return;
+    Serial.println("Button1");
+    if (configuringSegmentIdx == segments.end()) {
+        configuringSegmentIdx = segments.begin();
+    } else {
+        configuringSegmentIdx->setBlinkMode(Segment::BlinkMode::None);
+        ++configuringSegmentIdx;
     }
-    lastPress = millis();
-    Serial.println("Button 1: ");
-    cycleMode();
-    if (mode == Mode::Clock) {
-        setTime = hours.value() * millisInHour + minutes.value() * millisInMinute +
-                  seconds.value() * millisInSecond;
-        deltaTime = millis();
+    if (configuringSegmentIdx == segments.end()) {
+        int hour = segments[0].value() * 10 + segments[1].value();
+        int minute = segments[2].value() * 10 + segments[3].value();
+        int second = segments[4].value() * 10 + segments[5].value();
+        setTime = hour * millisInHour + minute * millisInMinute + second * millisInSecond;
+    } else {
+        configuringSegmentIdx->setBlinkMode(Segment::BlinkMode::Full);
     }
-    Serial.println(mode);
+
     interrupts();
 }
 
 void button2ISR()
 {
     noInterrupts();
-    if (millis() - lastPress < 150) {
-        interrupts();
-        return;
-    }
-    lastPress = millis();
-    Serial.println("Button 2: ");
-    switch (mode) {
-        case Mode::SetupHour1: {
-            int newValue = hours.value();
-            if (newValue / 10 == 2) {
-                newValue -= 20;
-            } else {
-                newValue += 10;
-            }
-            hours.setValue(newValue);
-        } break;
-        case Mode::SetupHour2: {
-            int newValue = hours.value();
-            if (newValue % 10 == 9) {
-                newValue -= 9;
-            } else {
-                ++newValue;
-            }
-            hours.setValue(newValue);
-        } break;
-        case Mode::SetupMinute1: {
-            int newValue = minutes.value();
-            if (newValue / 10 == 5) {
-                newValue -= 50;
-            } else {
-                newValue += 10;
-            }
-            minutes.setValue(newValue);
-        } break;
-        case Mode::SetupMinute2: {
-            int newValue = minutes.value();
-            if (newValue % 10 == 9) {
-                newValue -= 9;
-            } else {
-                ++newValue;
-            }
-            minutes.setValue(newValue);
-        } break;
-        case Mode::SetupSecond1: {
-            int newValue = seconds.value();
-            if (newValue / 10 == 5) {
-                newValue -= 50;
-            } else {
-                newValue += 10;
-            }
-            seconds.setValue(newValue);
-        } break;
-        case Mode::SetupSecond2: {
-            int newValue = seconds.value();
-            if (newValue % 10 == 9) {
-                newValue -= 9;
-            } else {
-                ++newValue;
-            }
-            seconds.setValue(newValue);
-        } break;
+    Serial.println("Button2");
+    if (configuringSegmentIdx != segments.end()) {
+        configuringSegmentIdx->increaseValue();
+        configuringSegmentIdx->setBlinkMode(Segment::BlinkMode::Value);
     }
     interrupts();
 }
@@ -245,55 +205,21 @@ void clockTick()
     int minute = now / millisInMinute;
     now -= minute * millisInMinute;
     int second = now / millisInSecond;
-
-    hours.setValue(hour);
-    minutes.setValue(minute);
-    seconds.setValue(second);
+    segments[0].setValue(hour / 10);
+    segments[1].setValue(hour % 10);
+    segments[2].setValue(minute / 10);
+    segments[3].setValue(minute % 10);
+    segments[4].setValue(second / 10);
+    segments[5].setValue(second % 10);
 }
 
 void loop()
 {
-    switch (mode) {
-        case Mode::Clock:
-            hours.setBlink(0);
-            minutes.setBlink(0);
-            seconds.setBlink(0);
-            clockTick();
-            break;
-        case Mode::SetupHour1:
-            hours.setBlink(1);
-            minutes.setBlink(0);
-            seconds.setBlink(0);
-            break;
-        case Mode::SetupHour2:
-            hours.setBlink(2);
-            minutes.setBlink(0);
-            seconds.setBlink(0);
-            break;
-        case Mode::SetupMinute1:
-            hours.setBlink(0);
-            minutes.setBlink(1);
-            seconds.setBlink(0);
-            break;
-        case Mode::SetupMinute2:
-            hours.setBlink(0);
-            minutes.setBlink(2);
-            seconds.setBlink(0);
-            break;
-        case Mode::SetupSecond1:
-            hours.setBlink(0);
-            minutes.setBlink(0);
-            seconds.setBlink(1);
-            break;
-        case Mode::SetupSecond2:
-            hours.setBlink(0);
-            minutes.setBlink(0);
-            seconds.setBlink(2);
-            break;
+    if (configuringSegmentIdx == segments.end()) {
+        clockTick();
     }
-
-    hours.display();
-    minutes.display();
-    seconds.display();
+    for (auto& s : segments) {
+        s.display();
+    }
     delay(100);
 }
