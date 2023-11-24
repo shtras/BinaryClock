@@ -76,7 +76,9 @@ public:
             Timestamp blinkTimeout = blinkPhase_ ? 100 : 1000;
             if (now < lastBlink_ || now - lastBlink_ > blinkTimeout) {
                 lastBlink_ = now;
-                value = 0;
+                if (blinkPhase_) {
+                    value = 0;
+                }
                 blinkPhase_ = !blinkPhase_;
             }
         }
@@ -100,7 +102,10 @@ public:
         }
     }
 
-    int value() {return value_;}
+    int value()
+    {
+        return value_;
+    }
 
 private:
     static constexpr int leftMask_ = 0b00001111;
@@ -118,14 +123,12 @@ ShiftRegister hoursRegister{11, 5, 8};
 ShiftRegister minutesRegister{12, 6, 9};
 ShiftRegister secondsResigter{13, 7, 10};
 
-std::vector<Segment> segments = {
-    Segment(hoursRegister, Segment::Position::Left, 2),
+std::vector<Segment> segments = {Segment(hoursRegister, Segment::Position::Left, 2),
     Segment(hoursRegister, Segment::Position::Right, 9),
     Segment(minutesRegister, Segment::Position::Left, 5),
     Segment(minutesRegister, Segment::Position::Right, 9),
     Segment(secondsResigter, Segment::Position::Left, 5),
-    Segment(secondsResigter, Segment::Position::Right, 9)
-};
+    Segment(secondsResigter, Segment::Position::Right, 9)};
 
 /*
 14:45:12
@@ -160,6 +163,7 @@ void button1ISR()
         int minute = segments[2].value() * 10 + segments[3].value();
         int second = segments[4].value() * 10 + segments[5].value();
         setTime = hour * millisInHour + minute * millisInMinute + second * millisInSecond;
+        deltaTime = millis();
     } else {
         configuringSegmentIdx->setBlinkMode(Segment::BlinkMode::Full);
     }
