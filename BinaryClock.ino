@@ -141,7 +141,7 @@ Timestamp deltaTime{0};
 Timestamp lastPress{0};
 
 auto configuringSegmentIdx = segments.end();
-;
+bool displaySeconds = true;
 
 void button1ISR()
 {
@@ -183,6 +183,8 @@ void button2ISR()
     if (configuringSegmentIdx != segments.end()) {
         configuringSegmentIdx->increaseValue();
         configuringSegmentIdx->setBlinkMode(Segment::BlinkMode::Value);
+    } else {
+        displaySeconds = !displaySeconds;
     }
     interrupts();
 }
@@ -223,8 +225,13 @@ void clockTick()
     segments[1].setValue(hour % 10);
     segments[2].setValue(minute / 10);
     segments[3].setValue(minute % 10);
-    segments[4].setValue(second / 10);
-    segments[5].setValue(second % 10);
+    if (displaySeconds) {
+        segments[4].setValue(second / 10);
+        segments[5].setValue(second % 10);
+    } else {
+        segments[4].setValue(0);
+        segments[5].setValue(0);
+    }
 }
 
 void loop()
