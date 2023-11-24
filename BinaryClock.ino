@@ -143,6 +143,11 @@ auto configuringSegmentIdx = segments.end();
 void button1ISR()
 {
     noInterrupts();
+    if (millis() - lastPress < 200) {
+        interrupts();
+        return;
+    }
+    lastPress = millis();
     Serial.println("Button1");
     if (configuringSegmentIdx == segments.end()) {
         configuringSegmentIdx = segments.begin();
@@ -165,6 +170,11 @@ void button1ISR()
 void button2ISR()
 {
     noInterrupts();
+    if (millis() - lastPress < 200) {
+        interrupts();
+        return;
+    }
+    lastPress = millis();
     Serial.println("Button2");
     if (configuringSegmentIdx != segments.end()) {
         configuringSegmentIdx->increaseValue();
