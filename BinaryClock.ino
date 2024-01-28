@@ -1,5 +1,6 @@
 #include <ArduinoSTL.h>
 #include <vector>
+#include <array>
 
 using Pin = int;
 using Timestamp = decltype(millis());
@@ -7,6 +8,16 @@ constexpr Timestamp millisInSecond = 1000;
 constexpr Timestamp millisInMinute = millisInSecond * 60;
 constexpr Timestamp millisInHour = millisInMinute * 60;
 constexpr Timestamp fullDay = 24 * millisInHour;
+
+long adjustedMillis()
+{
+    auto res = millis();
+    //res += res * 8. / 2340.;
+    //res += res * (135. / 45976. + 8. / 18321. - 1. / 56338.);
+    //res += res * (135. / 45976. + 8. / 18321. - 6. / 78185.);
+    res += res * (380. / 129600. + 3./6854.);
+    return res;
+}
 
 namespace pins
 {
@@ -131,10 +142,10 @@ std::vector<Segment> segments = {Segment(hoursRegister, Segment::Position::Left,
     Segment(secondsResigter, Segment::Position::Right, 9)};
 
 /*
-14:45:12
+14:45:55
 14 == 50400000
 45 == 2700000
-12 == 12000
+55 == 55000
 */
 Timestamp setTime{0};
 Timestamp deltaTime{0};
@@ -163,7 +174,7 @@ void button1ISR()
         int minute = segments[2].value() * 10 + segments[3].value();
         int second = segments[4].value() * 10 + segments[5].value();
         setTime = hour * millisInHour + minute * millisInMinute + second * millisInSecond;
-        deltaTime = millis();
+        deltaTime = adjustedMillis();
     } else {
         configuringSegmentIdx->setBlinkMode(Segment::BlinkMode::Full);
     }
@@ -191,9 +202,9 @@ void button2ISR()
 
 void setup()
 {
-    int startHour = 0;
-    int startMinute = 0;
-    int startSecond = 0;
+    int startHour = 14;
+    int startMinute = 45;
+    int startSecond = 55;
     setTime =
         startHour * millisInHour + startMinute * millisInMinute + startSecond * millisInSecond;
 
@@ -209,9 +220,147 @@ void setup()
     Serial.println("Started");
 }
 
+void animationShiftLeft(int h, int m, int oldH, int oldM)
+{
+    constexpr int delay1 = 150;
+    constexpr int seconds = delay1 * 7 / 1000;
+    std::array<int, 12> values{oldH / 10, oldH % 10, oldM / 10, oldM % 10, 5, 9, h / 10, h % 10,
+        m / 10, m % 10, 0, seconds};
+    for (int i = 0; i < 7; ++i) {
+        for (int j = 0; j < values.size() - 1; ++j) {
+            if (j < segments.size()) {
+                segments[j].setValue(values[j]);
+                segments[j].display();
+            }
+            values[j] = values[j + 1];
+        }
+        delay(delay1);
+    }
+}
+
+void animationShiftTop(int h, int m, int oldH, int oldM)
+{
+    auto makeDigit = [](int oldValue, int newValue) { return (oldValue << 4) | newValue; };
+    constexpr int delay1 = 150;
+    constexpr int seconds = delay1 * 4 / 1000;
+    std::array<int, 6> values{makeDigit(oldH / 10, h / 10), makeDigit(oldH % 10, h % 10),
+        makeDigit(oldM / 10, m / 10), makeDigit(oldM % 10, m % 10), makeDigit(5, 0),
+        makeDigit(9, seconds)};
+
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 6; ++j) {
+            segments[j].setValue((values[j] >> 4));
+            segments[j].display();
+            values[j] <<= 1;
+        }
+        delay(delay1);
+    }
+}
+
+void animationFadeTop(int h, int m, int oldH, int oldM)
+{
+    constexpr int delay1 = 30;
+    constexpr int delay2 = 100;
+    constexpr int newSeconds = (delay1 * 6 * 8 + delay2 * 8) / 1000;
+    std::array<int, 6> oldValues{oldH / 10, oldH % 10, oldM / 10, oldM % 10, 5, 9};
+    std::array<int, 6> newValues{h / 10, h % 10, m / 10, m % 10, 0, newSeconds};
+    int val = 0;
+    for (int i = 0; i < 4; ++i) {
+        val |= 1 << i;
+        for (int j = 0; j < 6; ++j) {
+            auto& segment = segments[j];
+            segment.setValue(val | oldValues[j]);
+            segment.display();
+            delay(delay1);
+        }
+        delay(delay2);
+    }
+    val = 0b1111;
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 6; ++j) {
+            auto& segment = segments[j];
+            segment.setValue(val | newValues[j]);
+            segment.display();
+            delay(delay1);
+        }
+        delay(delay2);
+        val <<= 1;
+    }
+}
+
+void animationFadeLeft(int h, int m, int oldH, int oldM)
+{
+    constexpr int delay1 = 30;
+    constexpr int delay2 = 100;
+    constexpr int seconds = (delay1 * 12 * 4 + delay2 * 12) / 1000;
+    std::array<int, 6> oldValues{oldH / 10, oldH % 10, oldM / 10, oldM % 10, 5, 9};
+    std::array<int, 6> newValues{h / 10, h % 10, m / 10, m % 10, 0, seconds};
+    for (int i = 0; i < 6; ++i) {
+        auto& segment = segments[i];
+        int val = 0;
+        for (int j = 0; j < 4; ++j) {
+            val |= 1 << j;
+            segment.setValue(val | oldValues[i]);
+            segment.display();
+            delay(delay1);
+        }
+        delay(delay2);
+    }
+    for (int i = 0; i < 6; ++i) {
+        auto& segment = segments[i];
+        int val = 0b1111;
+        for (int j = 0; j < 4; ++j) {
+            val <<= 1;
+            segment.setValue(val | newValues[i]);
+            segment.display();
+            delay(delay1);
+        }
+        delay(delay2);
+    }
+}
+
+void animationLineLeft(int h, int m, int oldH, int oldM)
+{
+    constexpr int delay1 = 150;
+    constexpr int seconds = delay1 * 14 / 1000;
+    std::array<int, 6> values{h / 10, h % 10, m / 10, m % 10, 0, seconds};
+    for (int i = 0; i < 7; ++i) {
+        if (i < 6) {
+            segments[i].setValue(0b1111);
+            segments[i].display();
+        }
+        if (i > 0) {
+            segments[i - 1].setValue(0);
+            segments[i - 1].display();
+        }
+        delay(delay1);
+    }
+    for (int i = 0; i < 7; ++i) {
+        if (i < 6) {
+            segments[i].setValue(0b1111);
+            segments[i].display();
+        }
+        if (i > 0) {
+            segments[i - 1].setValue(values[i - 1]);
+            segments[i - 1].display();
+        }
+        delay(delay1);
+    }
+}
+
+int lastMinute = 0;
+int lastHour = 0;
+
+using Animation = void (*)(int, int, int, int);
+
+std::vector<Animation> animations = {&animationFadeLeft, &animationFadeTop, &animationShiftLeft,
+    &animationShiftTop, &animationLineLeft};
+//std::vector<Animation> animations = {&animationShiftTop};
+
 void clockTick()
 {
-    Timestamp now = millis() + setTime - deltaTime;
+    Timestamp now = adjustedMillis();
+    now = now + setTime - deltaTime;
     while (now > fullDay) {
         now -= fullDay;
     }
@@ -221,6 +370,17 @@ void clockTick()
     int minute = now / millisInMinute;
     now -= minute * millisInMinute;
     int second = now / millisInSecond;
+    if (minute != lastMinute) {
+        if (displaySeconds) {
+            auto animation = animations[rand() % animations.size()];
+            animation(hour, minute, lastHour, lastMinute);
+            lastMinute = minute;
+            lastHour = hour;
+            return;
+        }
+        lastMinute = minute;
+        lastHour = hour;
+    }
     segments[0].setValue(hour / 10);
     segments[1].setValue(hour % 10);
     segments[2].setValue(minute / 10);
