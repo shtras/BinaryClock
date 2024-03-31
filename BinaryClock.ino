@@ -15,7 +15,21 @@ long adjustedMillis()
     //res += res * 8. / 2340.;
     //res += res * (135. / 45976. + 8. / 18321. - 1. / 56338.);
     //res += res * (135. / 45976. + 8. / 18321. - 6. / 78185.);
-    res += res * (380. / 129600. + 3./6854.);
+    //res += res * (380. / 129600. + 3. / 6854.);
+    /*
+    res += res * (109. / 32400.);
+    res -= res * (1.5 / 49730.);
+    res -= res * (1. / 140790);
+    */
+    /*
+    res += res * 0.00328025079160987;
+    res += res * (1.5 / 19371.5);
+    res -= res * (4. / 124960.);
+    res += res * (4.5 / 386615.);
+    */
+    res += res * 0.00333749859924004;
+    res -= res * (1. / 130500.);
+    res -= res * (1. / 218096.);
     return res;
 }
 
@@ -202,9 +216,9 @@ void button2ISR()
 
 void setup()
 {
-    int startHour = 14;
-    int startMinute = 45;
-    int startSecond = 55;
+    int startHour = 0;
+    int startMinute = 0;
+    int startSecond = 0;
     setTime =
         startHour * millisInHour + startMinute * millisInMinute + startSecond * millisInSecond;
 
